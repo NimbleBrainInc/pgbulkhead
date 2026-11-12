@@ -1,6 +1,6 @@
 [project]
 name = "pgbulkhead"
-version = "0.1.0"
+version = "0.1.1"
 description = "Tenant isolation for multi-tenant MCP servers on Postgres. One database, many tenants and workspaces: Postgres enforces the walls, and no agent can talk its way through them."
 readme = "README.md"
 license = "Apache-2.0"
