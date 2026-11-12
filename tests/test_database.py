@@ -85,18 +85,26 @@ async def test_admitted_slot_holds_one_slot_across_sessions(pg_url: str) -> None
         await db.dispose()
 
 
-async def test_admitted_slot_turns_a_checkout_timeout_into_pool_exhausted() -> None:
+async def test_admitted_slot_never_calls_a_later_checkout_timeout_safe_to_retry() -> None:
+    committed: list[int] = []
+
     @asynccontextmanager
-    async def exhausted(ctx: SecurityContext) -> AsyncGenerator[None, None]:
-        raise PoolTimeout("QueuePool limit reached")
+    async def second_checkout_times_out(ctx: SecurityContext) -> AsyncGenerator[None, None]:
+        if committed:
+            raise PoolTimeout("QueuePool limit reached")
         yield
+        committed.append(1)
 
     db = SecuredDatabase(model=MODEL, url_env="UNUSED", prefix="SVC")
-    db.unadmitted_session = exhausted  # ty: ignore[invalid-assignment]
+    db.unadmitted_session = second_checkout_times_out  # ty: ignore[invalid-assignment]
     async with db.admitted(A) as slot:
-        with pytest.raises(PoolExhausted):
+        async with slot.session():
+            pass
+        assert committed
+        with pytest.raises(PoolTimeout) as caught:
             async with slot.session():
                 pytest.fail("the body ran without a session")
+        assert not isinstance(caught.value, PoolExhausted)
 
 
 def test_a_database_needs_a_url_source() -> None:

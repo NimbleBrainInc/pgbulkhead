@@ -138,6 +138,10 @@ class TenancyModel:
             settings["bypass"] = self.bypass.setting or f"{ns}.role"
         for name, value in settings.items():
             _check_setting(value, f"{name} setting")
+        # One setting carrying two fields would let the later binding overwrite the earlier,
+        # so a policy reading the tenant setting could see the workspace identity.
+        if len(set(settings.values())) != len(settings):
+            raise ValueError("each resolved setting name must be distinct")
         object.__setattr__(self, "_settings", settings)
 
     @property

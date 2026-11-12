@@ -51,6 +51,12 @@ def test_the_bypass_is_off_unless_set() -> None:
         {"workspace_column": None, "workspace_setting": "x.w"},
         {"workspace_column": None, "bypass": GucBypass()},
         {"workspace_column": None, "bypass": RoleBypass("admin")},
+        {"tenant_setting": "x.shared", "workspace_setting": "x.shared"},
+        {"workspace_setting": "pgbulkhead.tenant_id"},
+        {"readable_setting": "pgbulkhead.workspace_id"},
+        {"scopes_setting": "pgbulkhead.allowed_workspaces"},
+        {"bypass": GucBypass(setting="pgbulkhead.tenant_id")},
+        {"workspace_column": None, "scopes_setting": "pgbulkhead.tenant_id"},
     ],
 )
 def test_unsafe_or_incoherent_models_are_refused(kwargs: dict) -> None:

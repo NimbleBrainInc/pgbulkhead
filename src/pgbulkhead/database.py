@@ -131,7 +131,7 @@ class SecuredDatabase:
         """Hold one of ``ctx``'s workspace slots across several sessions opened in turn."""
         try:
             async with self.limiter.admit(ctx):
-                yield AdmittedSlot(ctx, self.unadmitted_session, refusals=self.refusals)
+                yield AdmittedSlot(ctx, self.unadmitted_session)
         except WorkspaceBusy as exc:
             _apply(exc, self.refusals)
             raise

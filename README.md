@@ -179,7 +179,9 @@ them.
 Admit a call's own session only (`db.session`). A second session it opens while holding a slot
 (`db.unadmitted_session`) is not admitted, or a workspace whose every slot waits on a second
 session would deadlock. To run several sessions in turn under one slot, use
-`async with db.admitted(ctx) as slot:` and `slot.session()`.
+`async with db.admitted(ctx) as slot:` and `slot.session()`. A checkout timeout in
+`slot.session()` raises the pool's own `TimeoutError`, not `PoolExhausted`: an earlier session
+under the slot may have committed, so the request is not safe to retry as a whole.
 
 **Overload errors.** `WorkspaceBusy` and `PoolExhausted` are both `Overloaded`, and the call ran
 nothing. Each carries `message` and `next_step` text you can return to the agent as they are;
