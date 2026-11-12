@@ -242,6 +242,17 @@ The database suites need a disposable Postgres with a superuser at `PGBULKHEAD_T
 (default `postgresql+asyncpg://postgres@127.0.0.1:5432/postgres`); they create and drop their
 own roles and tables. Without one they skip locally and fail under CI.
 
+## Releasing
+
+1. In a pull request, set `version` in `pyproject.toml` and date its `CHANGELOG.md` entry.
+2. After it merges, tag the merge commit `v<version>` and push the tag.
+3. `release.yml` builds once and publishes to TestPyPI. Install from there in a clean
+   environment and run the suite:
+   `uv run --isolated --no-project --index https://test.pypi.org/simple/ --index-strategy unsafe-best-match --with pgbulkhead==<version> ...`
+4. A maintainer approves the `pypi` environment's deployment, and the same files go to PyPI.
+
+Publishing uses trusted publishing (OIDC); there is no API token to rotate or leak.
+
 ## License
 
 Apache-2.0. See [LICENSE](LICENSE) and [NOTICE](NOTICE). Security reports: [SECURITY.md](SECURITY.md).
