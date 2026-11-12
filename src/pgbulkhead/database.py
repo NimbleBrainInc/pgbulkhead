@@ -20,8 +20,8 @@ from sqlalchemy.ext.asyncio import AsyncConnection, AsyncEngine
 
 from .admission import (
     AdmittedSlot,
+    Overloaded,
     Refusals,
-    WorkspaceBusy,
     WorkspaceLimiter,
     _apply,
     admitted_session,
@@ -132,7 +132,8 @@ class SecuredDatabase:
         try:
             async with self.limiter.admit(ctx):
                 yield AdmittedSlot(ctx, self.unadmitted_session)
-        except WorkspaceBusy as exc:
+        except Overloaded as exc:
+            # The slot's own refusals, and any from the body: all of them are this server's.
             _apply(exc, self.refusals)
             raise
 
