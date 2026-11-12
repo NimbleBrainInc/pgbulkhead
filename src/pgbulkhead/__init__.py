@@ -35,6 +35,7 @@ from .pool import CONNECTIONS_PER_CALL, PoolConfigError, PoolSettings, create_po
 from .session import (
     CLEANUP_TIMEOUT_SECONDS,
     bind_context,
+    check_context,
     scoped_session,
     system_session,
     transaction,
@@ -59,6 +60,7 @@ __all__ = [
     "WorkspaceLimiter",
     "admitted_session",
     "bind_context",
+    "check_context",
     "context_from_claims",
     "create_pooled_engine",
     "policy_sql",

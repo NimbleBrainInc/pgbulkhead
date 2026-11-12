@@ -19,7 +19,7 @@ commit raises ``TimeoutError``, because its writes may or may not have landed.
 
 from __future__ import annotations
 
-from collections.abc import AsyncGenerator
+from collections.abc import AsyncGenerator, Iterable
 from contextlib import asynccontextmanager
 
 import anyio
@@ -32,6 +32,7 @@ from .model import GucBypass, TenancyModel
 __all__ = [
     "CLEANUP_TIMEOUT_SECONDS",
     "bind_context",
+    "check_context",
     "scoped_session",
     "system_session",
     "transaction",
@@ -76,7 +77,12 @@ async def bind_context(conn: AsyncConnection, model: TenancyModel, ctx: Security
 
     Must run inside a transaction: outside one, each ``set_config(.., true)`` ends with its own
     statement and binds nothing. Binds the values as given; :func:`scoped_session` is the
-    checked path that refuses an empty tenant or workspace first.
+    checked path, which refuses them first when they cannot be bound faithfully (see
+    :func:`check_context`).
+
+    The readable workspaces and the scopes are bound as one comma-joined value, and the policy
+    splits it on commas again. A value containing a comma would therefore bind as several, and
+    could make a workspace readable that the context never granted. Bind only checked values.
     """
     await _bind(conn, model.setting("tenant"), ctx.tenant_id)
     if model.has_workspace:
@@ -87,6 +93,31 @@ async def bind_context(conn: AsyncConnection, model: TenancyModel, ctx: Security
         await _bind(conn, model.setting("scopes"), ",".join(sorted(ctx.scopes)))
 
 
+def check_context(model: TenancyModel, ctx: SecurityContext) -> None:
+    """Raise :class:`ValueError` unless ``ctx`` can be bound under ``model`` faithfully.
+
+    Refuses an empty tenant, and an empty workspace when the model has one, rather than binding
+    a value that matches nothing: an unscoped read should be a deliberate act, not a typo that
+    looks like an empty result. Refuses an empty or comma-bearing workspace, read grant or
+    scope, because those are bound comma-joined and a comma inside one would split it into
+    several on the database side, widening what the session may read.
+    """
+    if not ctx.tenant_id:
+        raise ValueError("a scoped session requires a non-empty, verified tenant")
+    if model.has_workspace:
+        if not ctx.workspace_id:
+            raise ValueError("this model requires a non-empty, verified workspace")
+        _check_items((ctx.workspace_id, *ctx.allowed_workspaces), "workspace")
+    if model.scopes_setting is not None:
+        _check_items(ctx.scopes, "scope")
+
+
+def _check_items(values: Iterable[str], what: str) -> None:
+    for value in values:
+        if not value or "," in value:
+            raise ValueError(f"a {what} bound in a list must be non-empty and contain no comma")
+
+
 @asynccontextmanager
 async def scoped_session(
     engine: AsyncEngine, model: TenancyModel, ctx: SecurityContext
@@ -94,15 +125,10 @@ async def scoped_session(
     """A transaction with ``ctx`` bound under ``model``.
 
     Every query inside sees only the context's tenant and, for a model with a workspace, the
-    workspaces it may read; every write lands only in its tenant and active workspace. Refuses
-    an empty tenant, or an empty workspace when the model has one, rather than binding a value
-    that matches nothing: an unscoped read should be a deliberate act, not a typo that looks
-    like an empty result.
+    workspaces it may read; every write lands only in its tenant and active workspace. Raises
+    :class:`ValueError` for a context :func:`check_context` refuses, before opening anything.
     """
-    if not ctx.tenant_id:
-        raise ValueError("a scoped session requires a non-empty, verified tenant")
-    if model.has_workspace and not ctx.workspace_id:
-        raise ValueError("this model requires a non-empty, verified workspace")
+    check_context(model, ctx)
     async with transaction(engine) as conn:
         await bind_context(conn, model, ctx)
         yield conn

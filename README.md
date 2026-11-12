@@ -222,7 +222,7 @@ because its protocol state is unknown. Nothing stays checked out either way.
 | `context_from_claims`, `ClaimNames` | a context from verified token claims, fail closed |
 | `scoped_session` | a transaction with a context bound, refusing an empty identity |
 | `system_session` | a transaction through a `GucBypass`, optionally bound to one tenant |
-| `transaction`, `bind_context` | the shielded transaction alone, and the binding alone |
+| `transaction`, `bind_context`, `check_context` | the shielded transaction alone, the binding alone, and the check `scoped_session` runs before it |
 | `SecuredDatabase` | one server's model, engine, pool settings and limiter |
 | `PoolSettings`, `create_pooled_engine` | pool and admission settings, validated together |
 | `WorkspaceLimiter`, `admitted_session` | per-workspace admission, for a server not using `SecuredDatabase` |

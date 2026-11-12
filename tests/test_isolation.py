@@ -21,6 +21,7 @@ from pgbulkhead import (
     RoleBypass,
     SecurityContext,
     TenancyModel,
+    bind_context,
     policy_statements,
     scoped_session,
     system_session,
@@ -230,9 +231,29 @@ async def test_forced_policies_bind_the_table_owner_too(db: Db) -> None:
         assert await _bodies(conn) == ["a1"]
 
 
+async def test_a_comma_in_a_grant_cannot_split_it_into_wider_reads(db: Db) -> None:
+    """The readable set is bound comma-joined and split again by the policy, so a grant named
+    "ws-1,ws-2" would read as two grants. The checked session refuses it outright."""
+    smuggled = SecurityContext(
+        tenant_id="tenant-a", workspace_id="ws-9", allowed_workspaces=frozenset({"ws-1,ws-2"})
+    )
+    with pytest.raises(ValueError, match="comma"):
+        async with scoped_session(db.app, NOTES, smuggled):
+            pytest.fail("bound a comma-bearing grant")
+    # The unchecked path binds as given, which is why it says so.
+    async with transaction(db.app) as conn:
+        await bind_context(conn, NOTES, smuggled)
+        assert await _bodies(conn) == ["a1", "a2"]
+
+
 async def test_empty_identity_is_refused_before_binding() -> None:
     engine = create_async_engine("postgresql+asyncpg://unused@127.0.0.1:1/unused")
-    for ctx in (SecurityContext(tenant_id="", workspace_id="ws-1"), SecurityContext("tenant-a")):
+    for ctx in (
+        SecurityContext(tenant_id="", workspace_id="ws-1"),
+        SecurityContext("tenant-a"),
+        SecurityContext("tenant-a", "ws-1,ws-2"),
+        SecurityContext("tenant-a", "ws-1", allowed_workspaces=frozenset({""})),
+    ):
         with pytest.raises(ValueError):
             async with scoped_session(engine, NOTES, ctx):
                 pytest.fail("bound an empty identity")

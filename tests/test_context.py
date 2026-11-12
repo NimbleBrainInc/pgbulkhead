@@ -57,3 +57,15 @@ def test_require_scope() -> None:
     ctx.require_scope("notes:read")
     with pytest.raises(PermissionError):
         ctx.require_scope("notes:write")
+
+
+def test_check_context_refuses_values_a_list_binding_would_split() -> None:
+    from pgbulkhead import TenancyModel, check_context
+
+    with_scopes = TenancyModel(scopes_setting="app.scopes")
+    check_context(with_scopes, SecurityContext("t", "w", scopes=frozenset({"notes:read"})))
+    for scopes in ({"read,admin"}, {""}):
+        with pytest.raises(ValueError, match="comma"):
+            check_context(with_scopes, SecurityContext("t", "w", scopes=frozenset(scopes)))
+    # Scopes are only checked when the model binds them.
+    check_context(TenancyModel(), SecurityContext("t", "w", scopes=frozenset({"a,b"})))
