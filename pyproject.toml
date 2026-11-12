@@ -1,0 +1,56 @@
+[project]
+name = "pgbulkhead"
+version = "0.1.0"
+description = "Tenant isolation for multi-tenant MCP servers on Postgres. One database, many tenants and workspaces: Postgres enforces the walls, and no agent can talk its way through them."
+readme = "README.md"
+license = "Apache-2.0"
+license-files = ["LICENSE", "NOTICE"]
+authors = [{ name = "NimbleBrain, Inc." }]
+requires-python = ">=3.12"
+# anyio shields a session's cleanup from the cancel scopes MCP calls run under, and runs the
+# per-workspace admission wait.
+dependencies = ["anyio>=4.4", "sqlalchemy[asyncio]>=2.0.36"]
+keywords = ["postgres", "row-level-security", "multi-tenant", "mcp", "sqlalchemy", "asyncio"]
+classifiers = [
+    "Development Status :: 3 - Alpha",
+    "Framework :: AsyncIO",
+    "Intended Audience :: Developers",
+    "Operating System :: OS Independent",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.12",
+    "Programming Language :: Python :: 3.13",
+    "Topic :: Database",
+    "Typing :: Typed",
+]
+
+[project.urls]
+Homepage = "https://github.com/NimbleBrainInc/pgbulkhead"
+Issues = "https://github.com/NimbleBrainInc/pgbulkhead/issues"
+Changelog = "https://github.com/NimbleBrainInc/pgbulkhead/blob/main/CHANGELOG.md"
+
+[dependency-groups]
+# asyncpg is test-only: the database suites run against a real Postgres.
+dev = ["asyncpg>=0.30", "pytest>=8.3", "pytest-asyncio>=0.25", "ruff>=0.9", "ty>=0.0.1a1"]
+
+[build-system]
+requires = ["hatchling>=1.27"]
+build-backend = "hatchling.build"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/pgbulkhead"]
+
+[tool.hatch.build.targets.sdist]
+include = ["src/pgbulkhead", "tests", "README.md", "CHANGELOG.md", "SECURITY.md", "LICENSE", "NOTICE"]
+
+[tool.ruff]
+line-length = 100
+target-version = "py312"
+src = ["src", "tests"]
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "UP", "B", "SIM"]
+
+[tool.pytest.ini_options]
+asyncio_mode = "auto"
+asyncio_default_fixture_loop_scope = "function"
+testpaths = ["tests"]
