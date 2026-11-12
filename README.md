@@ -246,11 +246,10 @@ own roles and tables. Without one they skip locally and fail under CI.
 
 1. In a pull request, set `version` in `pyproject.toml` and date its `CHANGELOG.md` entry.
 2. After it merges, tag the merge commit `v<version>` and push the tag.
-3. `release.yml` builds once, then waits for approval of the `pypi` environment. Download the
-   run's `dist` artifact (the exact files PyPI will receive), install the wheel in a clean
-   environment, and run the suite against it.
-4. A maintainer approves the deployment, and those files go to PyPI. A version can never be
-   uploaded twice, so step 3 is the last chance to catch a broken release.
+3. `release.yml` builds once, installs the built wheel into a clean environment on each
+   supported Python, runs the test suite the sdist ships against a real Postgres, and only then
+   publishes those same files to PyPI. A version can never be uploaded twice, so a red run
+   publishes nothing; fix it and release the next patch version.
 
 Publishing uses trusted publishing (OIDC); there is no API token to rotate or leak.
 
