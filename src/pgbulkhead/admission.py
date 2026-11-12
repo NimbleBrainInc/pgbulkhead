@@ -188,9 +188,12 @@ class AdmittedSlot:
     """One of a workspace's slots, held by a request that opens several sessions in turn.
 
     Each :meth:`session` runs under the held slot, so the request uses one connection at a
-    time and never waits on its own workspace's slots. A checkout that times out raises the
-    pool's own ``TimeoutError``, not :class:`PoolExhausted`: an earlier session under the slot
-    may have committed, so the request is not safe to retry as a whole.
+    time and never waits on its own workspace's slots.
+
+    Until a session under the slot has opened, nothing has run under it, so a checkout that
+    times out raises :class:`PoolExhausted`, which says a retry is safe. Once one has opened, it
+    may have committed, and a later checkout that times out raises the pool's own
+    ``TimeoutError`` instead: the request as a whole is no longer safe to retry.
     """
 
     def __init__(
@@ -200,10 +203,19 @@ class AdmittedSlot:
     ) -> None:
         self.ctx = ctx
         self._open_session = open_session
+        self._opened = False
 
     def session(self) -> AbstractAsyncContextManager[Any]:
         """A session for the slot's context, under the held slot."""
-        return self._open_session(self.ctx)
+        if self._opened:
+            return self._open_session(self.ctx)
+        return self._first_session()
+
+    @asynccontextmanager
+    async def _first_session(self) -> AsyncGenerator[Any, None]:
+        async with _refusing_checkout_timeout(self._open_session(self.ctx)) as session:
+            self._opened = True
+            yield session
 
 
 @asynccontextmanager

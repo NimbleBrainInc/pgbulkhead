@@ -107,6 +107,18 @@ async def test_admitted_slot_never_calls_a_later_checkout_timeout_safe_to_retry(
         assert not isinstance(caught.value, PoolExhausted)
 
 
+async def test_admitted_slot_first_checkout_timeout_is_a_safe_refusal() -> None:
+    """Nothing has run under the slot before its first session opens, so a timeout there is
+    the same refusal ``db.session`` gives, with this server's text."""
+    pool = RefusalText(message="Busy everywhere.", next_step="Retry later.")
+    db = SecuredDatabase(model=MODEL, url_env="UNUSED", prefix="SVC", refusals={Overloaded: pool})
+    db.unadmitted_session = _exhausted  # ty: ignore[invalid-assignment]
+    with pytest.raises(PoolExhausted) as caught:
+        async with db.admitted(A) as slot, slot.session():
+            pytest.fail("the body ran without a session")
+    assert caught.value.message == pool.message
+
+
 def test_a_database_needs_a_url_source() -> None:
     with pytest.raises(ValueError, match="url_env or url"):
         SecuredDatabase(model=MODEL, prefix="SVC")
