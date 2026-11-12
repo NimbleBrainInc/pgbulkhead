@@ -205,14 +205,17 @@ class AdmittedSlot:
         self._open_session = open_session
         self._opened = False
 
-    def session(self) -> AbstractAsyncContextManager[Any]:
-        """A session for the slot's context, under the held slot."""
-        if self._opened:
-            return self._open_session(self.ctx)
-        return self._first_session()
-
     @asynccontextmanager
-    async def _first_session(self) -> AsyncGenerator[Any, None]:
+    async def session(self) -> AsyncGenerator[Any, None]:
+        """A session for the slot's context, under the held slot.
+
+        Whether a checkout timeout is a refusal is decided on entry, not when the context
+        manager is made: one made earlier may be entered after another session has opened.
+        """
+        if self._opened:
+            async with self._open_session(self.ctx) as session:
+                yield session
+            return
         async with _refusing_checkout_timeout(self._open_session(self.ctx)) as session:
             self._opened = True
             yield session

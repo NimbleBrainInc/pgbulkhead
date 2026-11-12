@@ -107,6 +107,29 @@ async def test_admitted_slot_never_calls_a_later_checkout_timeout_safe_to_retry(
         assert not isinstance(caught.value, PoolExhausted)
 
 
+async def test_admitted_slot_decides_on_entry_not_when_the_session_is_made() -> None:
+    committed: list[int] = []
+
+    @asynccontextmanager
+    async def second_checkout_times_out(ctx: SecurityContext) -> AsyncGenerator[None, None]:
+        if committed:
+            raise PoolTimeout("QueuePool limit reached")
+        yield
+        committed.append(1)
+
+    db = SecuredDatabase(model=MODEL, url_env="UNUSED", prefix="SVC")
+    db.unadmitted_session = second_checkout_times_out  # ty: ignore[invalid-assignment]
+    async with db.admitted(A) as slot:
+        first, second = slot.session(), slot.session()
+        async with first:
+            pass
+        assert committed
+        with pytest.raises(PoolTimeout) as caught:
+            async with second:
+                pytest.fail("the body ran without a session")
+        assert not isinstance(caught.value, PoolExhausted)
+
+
 async def test_admitted_slot_first_checkout_timeout_is_a_safe_refusal() -> None:
     """Nothing has run under the slot before its first session opens, so a timeout there is
     the same refusal ``db.session`` gives, with this server's text."""
