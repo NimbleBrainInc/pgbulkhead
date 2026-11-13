@@ -87,6 +87,28 @@ async def test_refusal_holds_on_every_attempt(bypass_url: str, engines: list[Asy
                 await conn.execute(text("SELECT 1"))
 
 
+async def test_refused_connections_are_closed_on_the_server(
+    admin_engine: AsyncEngine, bypass_url: str, engines: list[AsyncEngine]
+) -> None:
+    """Each refusal closes its connection before the error propagates, so repeated attempts
+    cannot pile up open backends for the refused role. The errors are kept, so nothing is left
+    for garbage collection to close: what is open right after the refusals stays open."""
+    engine = create_pooled_engine(bypass_url, SETTINGS)
+    engines.append(engine)
+    refusals: list[pytest.ExceptionInfo[UnsafeRoleError]] = []
+    for _ in range(4):
+        with pytest.raises(UnsafeRoleError) as caught:
+            async with engine.connect() as conn:
+                await conn.execute(text("SELECT 1"))
+        refusals.append(caught)
+    async with admin_engine.connect() as conn:
+        count = await conn.execute(
+            text("SELECT count(*) FROM pg_stat_activity WHERE usename = :r"), {"r": BYPASS_ROLE}
+        )
+        assert count.scalar_one() == 0
+    assert len(refusals) == 4
+
+
 async def test_pooled_engine_serves_a_role_that_cannot_bypass(
     pg_url: str, engines: list[AsyncEngine]
 ) -> None:

@@ -15,6 +15,7 @@ The check reads the connected role's attributes once per new connection, not per
 
 from __future__ import annotations
 
+import contextlib
 from typing import Any
 
 from sqlalchemy import event, text
@@ -52,9 +53,11 @@ async def check_role(conn: AsyncConnection) -> None:
 def install_role_guard(engine: AsyncEngine) -> AsyncEngine:
     """Refuse every new connection ``engine`` makes as a role that bypasses row-level security.
 
-    The check runs when the pool opens a physical connection; raising there discards the
-    connection, so the checkout that asked for it fails with :class:`UnsafeRoleError` and no
-    session ever runs as that role. Returns ``engine``.
+    The check runs when the pool opens a physical connection. A refused connection is closed
+    here, before the error propagates, so the checkout that asked for it fails with
+    :class:`UnsafeRoleError`, no session ever runs as that role, and repeated attempts leave no
+    connection open on the server. (Some SQLAlchemy 2.0 releases do not close a connection whose
+    ``connect`` listener raised.) Returns ``engine``.
     """
 
     @event.listens_for(engine.sync_engine, "connect")
@@ -65,6 +68,12 @@ def install_role_guard(engine: AsyncEngine) -> AsyncEngine:
             role, superuser, bypassrls = cursor.fetchone()
         finally:
             cursor.close()
-        _refuse(role, superuser, bypassrls)
+        try:
+            _refuse(role, superuser, bypassrls)
+        except UnsafeRoleError:
+            # Close it ourselves, keeping the refusal as the error the caller sees.
+            with contextlib.suppress(Exception):
+                dbapi_connection.close()
+            raise
 
     return engine
