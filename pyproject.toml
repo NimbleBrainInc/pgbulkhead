@@ -1,6 +1,6 @@
 [project]
 name = "pgbulkhead"
-version = "0.1.1"
+version = "0.1.2"
 description = "Tenant isolation for multi-tenant MCP servers on Postgres. One database, many tenants and workspaces: Postgres enforces the walls, and no agent can talk its way through them."
 readme = "README.md"
 license = "Apache-2.0"
@@ -9,7 +9,7 @@ authors = [{ name = "NimbleBrain, Inc." }]
 requires-python = ">=3.12"
 # anyio shields a session's cleanup from the cancel scopes MCP calls run under, and runs the
 # per-workspace admission wait.
-dependencies = ["anyio>=4.4", "sqlalchemy[asyncio]>=2.0.36"]
+dependencies = ["anyio>=4.4", "sqlalchemy[asyncio]>=2.0.44"]
 keywords = ["postgres", "row-level-security", "multi-tenant", "mcp", "sqlalchemy", "asyncio"]
 classifiers = [
     "Development Status :: 3 - Alpha",
@@ -19,6 +19,7 @@ classifiers = [
     "Programming Language :: Python :: 3",
     "Programming Language :: Python :: 3.12",
     "Programming Language :: Python :: 3.13",
+    "Programming Language :: Python :: 3.14",
     "Topic :: Database",
     "Typing :: Typed",
 ]

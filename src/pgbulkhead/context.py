@@ -80,7 +80,8 @@ def context_from_claims(
 
     Fails closed: a missing or empty tenant (or workspace, when ``names.workspace`` is set)
     raises :class:`ValueError` rather than defaulting to a wider scope. The active workspace is
-    always readable, so it is added to ``allowed_workspaces``.
+    always readable, so it is added to ``allowed_workspaces``. Scopes may be a list or OAuth's
+    space-separated string; every other list claim must be a list.
     """
     names = names or ClaimNames()
     tenant = claims.get(names.tenant)
@@ -97,7 +98,7 @@ def context_from_claims(
         tenant_id=tenant,
         workspace_id=workspace,
         allowed_workspaces=allowed | {workspace} if workspace else allowed,
-        scopes=_str_set(claims.get(names.scopes)),
+        scopes=_scope_set(claims.get(names.scopes)),
         user_id=_opt_str(claims.get(names.user_id)),
         correlation_id=_opt_str(claims.get(names.correlation_id)),
     )
@@ -105,6 +106,13 @@ def context_from_claims(
 
 def _opt_str(value: object) -> str | None:
     return value if isinstance(value, str) and value else None
+
+
+def _scope_set(value: object) -> frozenset[str]:
+    """Scopes as a list, or as OAuth's single space-separated string (RFC 6749, section 3.3)."""
+    if isinstance(value, str):
+        return frozenset(value.split())
+    return _str_set(value)
 
 
 def _str_set(value: object) -> frozenset[str]:

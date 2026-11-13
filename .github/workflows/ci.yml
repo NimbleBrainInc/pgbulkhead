@@ -37,8 +37,8 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        python: ["3.12", "3.13"]
-        postgres: ["14", "17"]
+        python: ["3.12", "3.13", "3.14"]
+        postgres: ["14", "17", "18"]
     services:
       postgres:
         image: postgres:${{ matrix.postgres }}-alpine
@@ -63,10 +63,41 @@ jobs:
       - run: uv sync --locked
       - run: uv run pytest -q
 
+  # The suites at the lowest versions pyproject.toml allows, so a floor that no longer holds
+  # fails here instead of on a user's install.
+  lowest:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    services:
+      postgres:
+        image: postgres:17-alpine
+        env:
+          POSTGRES_HOST_AUTH_METHOD: trust
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U postgres"
+          --health-interval 2s
+          --health-timeout 2s
+          --health-retries 25
+    env:
+      PGBULKHEAD_TEST_URL: postgresql+asyncpg://postgres@127.0.0.1:5432/postgres
+    steps:
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+        with:
+          persist-credentials: false
+      - uses: astral-sh/setup-uv@fac544c07dec837d0ccb6301d7b5580bf5edae39 # v8.2.0
+        with:
+          python-version: "3.12"
+      - run: uv run --isolated --resolution lowest-direct --python 3.12 pytest -q
+
   # One required check that stands for the matrix, so branch rules need not list each cell.
   verify:
     if: always()
-    needs: [check, test]
+    needs: [check, test, lowest]
     runs-on: ubuntu-latest
     steps:
-      - run: test "${{ needs.check.result }}" = success && test "${{ needs.test.result }}" = success
+      - run: >-
+          test "${{ needs.check.result }}" = success
+          && test "${{ needs.test.result }}" = success
+          && test "${{ needs.lowest.result }}" = success

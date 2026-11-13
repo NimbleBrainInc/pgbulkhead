@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from collections.abc import AsyncGenerator
-from contextlib import asynccontextmanager
+from contextlib import AsyncExitStack, asynccontextmanager
 
 import pytest
 from sqlalchemy import text
@@ -200,5 +200,29 @@ async def test_system_session_binds_the_tenant_it_is_given(pg_url: str) -> None:
                 )
             )
             assert tuple(row.one()) == ("system", "tenant-a")
+    finally:
+        await db.dispose()
+
+
+async def test_a_real_pool_timeout_is_refused_as_pool_exhausted(pg_url: str) -> None:
+    """Three workspaces each hold one of a three-connection pool; a fourth workspace is admitted
+    (it has its own slot) but finds no connection, and is refused having run nothing."""
+    small = PoolSettings(
+        pool_size=1, max_overflow=2, pool_timeout_seconds=0.2, workspace_concurrency=1
+    )
+    db = SecuredDatabase(model=MODEL, prefix="SVC", url=lambda: pg_url, defaults=small)
+    holders = [SecurityContext("tenant-a", f"ws-{i}") for i in range(3)]
+    try:
+        async with AsyncExitStack() as stack:
+            for ctx in holders:
+                conn = await stack.enter_async_context(db.session(ctx))
+                await conn.execute(text("SELECT 1"))
+            with pytest.raises(PoolExhausted) as caught:
+                async with db.session(SecurityContext("tenant-a", "ws-9")):
+                    pytest.fail("ran without a connection")
+            assert "QueuePool" not in str(caught.value)
+        assert db.limiter.tracked() == 0
+        async with db.session(SecurityContext("tenant-a", "ws-9")) as conn:
+            assert (await conn.execute(text("SELECT 1"))).scalar() == 1
     finally:
         await db.dispose()

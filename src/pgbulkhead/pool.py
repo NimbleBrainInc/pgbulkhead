@@ -47,6 +47,8 @@ from typing import Any
 
 from sqlalchemy.ext.asyncio import AsyncEngine, create_async_engine
 
+from .role import install_role_guard
+
 __all__ = [
     "CONNECTIONS_PER_CALL",
     "PoolConfigError",
@@ -180,9 +182,20 @@ class PoolSettings:
         }
 
 
-def create_pooled_engine(url: str, settings: PoolSettings, **options: Any) -> AsyncEngine:
+def create_pooled_engine(
+    url: str,
+    settings: PoolSettings,
+    *,
+    refuse_bypass_roles: bool = True,
+    **options: Any,
+) -> AsyncEngine:
     """An async engine whose pool is sized by ``settings``, with ``pool_pre_ping`` on.
 
-    ``options`` pass through to ``create_async_engine`` and may override the pool keywords.
+    With ``refuse_bypass_roles`` (the default) the engine refuses every connection made as a
+    superuser or ``BYPASSRLS`` role, which row-level security does not apply to (see
+    :func:`~pgbulkhead.install_role_guard`). Turn it off only for an engine that is meant to
+    bypass, such as one that runs migrations. ``options`` pass through to
+    ``create_async_engine`` and may override the pool keywords.
     """
-    return create_async_engine(url, **{**settings.engine_options(), **options})
+    engine = create_async_engine(url, **{**settings.engine_options(), **options})
+    return install_role_guard(engine) if refuse_bypass_roles else engine

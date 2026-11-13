@@ -54,17 +54,30 @@ async def admin_engine() -> AsyncIterator[AsyncEngine]:
         await engine.dispose()
 
 
+#: The role the pooled fixtures connect as: neither superuser nor BYPASSRLS, as a server's own
+#: role must be, since a pooled engine refuses any other (see ``install_role_guard``).
+SERVER_ROLE = "pgbulkhead_server"
+
+
 @pytest_asyncio.fixture
 async def pg_url(admin_engine: AsyncEngine) -> str:
-    """The reachable test Postgres URL (skips like ``admin_engine`` without one)."""
-    return URL
+    """The test Postgres URL, logging in as :data:`SERVER_ROLE` (skips like ``admin_engine``
+    without a database). The role may create tables in ``public``, as the suites need."""
+    async with admin_engine.begin() as conn:
+        exists = await conn.execute(
+            text("SELECT 1 FROM pg_roles WHERE rolname = :r"), {"r": SERVER_ROLE}
+        )
+        if exists.scalar() is None:
+            await conn.execute(text(f"CREATE ROLE {SERVER_ROLE} LOGIN NOSUPERUSER NOBYPASSRLS"))
+        await conn.execute(text(f"GRANT CREATE ON SCHEMA public TO {SERVER_ROLE}"))
+    return url_for(SERVER_ROLE)
 
 
 @pytest_asyncio.fixture
-async def pg_engine(admin_engine: AsyncEngine) -> AsyncIterator[AsyncEngine]:
+async def pg_engine(pg_url: str) -> AsyncIterator[AsyncEngine]:
     """A one-connection pooled engine, as a server builds it, so a terminated connection shows."""
     engine = create_pooled_engine(
-        URL, PoolSettings(pool_size=1, max_overflow=2, workspace_concurrency=1)
+        pg_url, PoolSettings(pool_size=1, max_overflow=2, workspace_concurrency=1)
     )
     try:
         yield engine

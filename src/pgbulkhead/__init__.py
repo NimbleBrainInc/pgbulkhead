@@ -32,6 +32,7 @@ from .database import SecuredDatabase
 from .model import GucBypass, RoleBypass, TenancyModel
 from .policy import policy_sql, policy_statements
 from .pool import CONNECTIONS_PER_CALL, PoolConfigError, PoolSettings, create_pooled_engine
+from .role import UnsafeRoleError, check_role, install_role_guard
 from .session import (
     CLEANUP_TIMEOUT_SECONDS,
     bind_context,
@@ -56,13 +57,16 @@ __all__ = [
     "SecuredDatabase",
     "SecurityContext",
     "TenancyModel",
+    "UnsafeRoleError",
     "WorkspaceBusy",
     "WorkspaceLimiter",
     "admitted_session",
     "bind_context",
     "check_context",
+    "check_role",
     "context_from_claims",
     "create_pooled_engine",
+    "install_role_guard",
     "policy_sql",
     "policy_statements",
     "scoped_session",
