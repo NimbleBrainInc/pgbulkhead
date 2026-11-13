@@ -33,6 +33,11 @@ Changelog = "https://github.com/NimbleBrainInc/pgbulkhead/blob/main/CHANGELOG.md
 # asyncpg is test-only: the database suites run against a real Postgres.
 dev = ["asyncpg>=0.30", "pytest>=8.3", "pytest-asyncio>=0.25", "ruff>=0.9", "ty>=0.0.1a1"]
 
+[tool.uv]
+# Resolve only releases at least two weeks old, so a dependency published hours ago (or a
+# compromised one) never lands in the lock before anyone could notice.
+exclude-newer = "2 weeks"
+
 [build-system]
 requires = ["hatchling>=1.27"]
 build-backend = "hatchling.build"
