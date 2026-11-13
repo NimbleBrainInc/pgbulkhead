@@ -201,6 +201,17 @@ async def test_a_row_cannot_be_relabelled_out_of_the_active_workspace(db: Db) ->
                 await conn.execute(text(f"UPDATE notes SET {target} WHERE body = 'a1'"))
 
 
+async def test_cross_tenant_update_and_delete_touch_no_row(db: Db) -> None:
+    """Another tenant's rows are invisible to UPDATE and DELETE, so both match none of them."""
+    async with scoped_session(db.app, NOTES, A1) as conn:
+        assert await _count(conn, "UPDATE notes SET body = 'x' WHERE tenant_id = 'tenant-b'") == 0
+        assert await _count(conn, "DELETE FROM notes WHERE tenant_id = 'tenant-b'") == 0
+        # An unfiltered write reaches only the session's own row.
+        assert await _count(conn, "UPDATE notes SET body = body") == 1
+    async with scoped_session(db.app, NOTES, B1) as conn:
+        assert await _bodies(conn) == ["b1"]
+
+
 # --- default deny, pooling, ownership ----------------------------------------------------
 
 
@@ -283,6 +294,40 @@ async def test_models_on_different_settings_cannot_be_confused(db: Db) -> None:
         assert await _bodies(conn, "ledger") == []
 
 
+async def test_single_key_update_and_delete_never_cross_tenants(db: Db) -> None:
+    async with scoped_session(db.app, LEDGER, SecurityContext("tenant-a")) as conn:
+        assert await _count(conn, "UPDATE ledger SET body = 'x' WHERE tenant_id = 'tenant-b'") == 0
+        assert await _count(conn, "DELETE FROM ledger WHERE tenant_id = 'tenant-b'") == 0
+        assert await _count(conn, "DELETE FROM ledger") == 2
+    async with scoped_session(db.app, LEDGER, SecurityContext("tenant-b")) as conn:
+        assert await _bodies(conn, "ledger") == ["b1"]
+    with pytest.raises(DBAPIError, match="row-level security"):
+        async with scoped_session(db.app, LEDGER, SecurityContext("tenant-b")) as conn:
+            await conn.execute(text("UPDATE ledger SET tenant_id = 'tenant-a'"))
+
+
+async def test_switching_a_live_table_between_shapes_leaves_only_the_new_policies(
+    db: Db,
+) -> None:
+    """Permissive policies combine with OR, so a policy left over from the other shape would
+    widen access. Re-rendering a live table leaves exactly the new shape's policies."""
+
+    async def policies() -> list[str]:
+        async with db.admin.connect() as conn:
+            rows = await conn.execute(
+                text("SELECT policyname FROM pg_policies WHERE tablename = 'notes' ORDER BY 1")
+            )
+            return list(rows.scalars())
+
+    assert await policies() == ["notes_delete", "notes_insert", "notes_select", "notes_update"]
+    await _exec(db.owner, *policy_statements(LEDGER, "notes"))
+    assert await policies() == ["notes_isolation"]
+    await _exec(db.owner, *policy_statements(NOTES, "notes"))
+    assert await policies() == ["notes_delete", "notes_insert", "notes_select", "notes_update"]
+    async with scoped_session(db.app, NOTES, A1) as conn:
+        assert await _bodies(conn) == ["a1"]
+
+
 # --- bypasses ----------------------------------------------------------------------------
 
 
@@ -294,6 +339,18 @@ async def test_guc_bypass_crosses_workspaces_never_tenants(db: Db) -> None:
     # Tables whose model carries no bypass ignore the setting.
     async with system_session(db.app, GUC_BYPASS, "tenant-a") as conn:
         assert await _bodies(conn) == []
+
+
+async def test_guc_bypass_writes_across_workspaces_never_tenants(db: Db) -> None:
+    async with system_session(db.app, GUC_BYPASS, "tenant-a") as conn:
+        await conn.execute(text("INSERT INTO notes_guc VALUES ('tenant-a', 'ws-7', 'a7')"))
+        assert await _count(conn, "UPDATE notes_guc SET body = body || '!'") == 3
+        assert await _count(conn, "DELETE FROM notes_guc WHERE tenant_id = 'tenant-b'") == 0
+    with pytest.raises(DBAPIError, match="row-level security"):
+        async with system_session(db.app, GUC_BYPASS, "tenant-a") as conn:
+            await conn.execute(text("INSERT INTO notes_guc VALUES ('tenant-b', 'ws-1', 'x')"))
+    async with system_session(db.app, GUC_BYPASS, "tenant-b") as conn:
+        assert await _bodies(conn, "notes_guc") == ["b1"]
 
 
 async def test_role_bypass_is_out_of_the_app_roles_reach(db: Db) -> None:
@@ -333,3 +390,30 @@ async def test_arbitrary_sql_in_the_app_role_is_outside_the_guarantee(db: Db) ->
     async with scoped_session(db.app, NOTES, A1) as conn:
         await conn.execute(text("SELECT set_config('t.tenant_id', 'tenant-b', true)"))
         assert await _bodies(conn) == ["b1"]
+
+
+async def test_scopes_bind_to_the_scopes_setting(db: Db) -> None:
+    """A model with a scopes setting binds the context's scopes, sorted and comma-joined, for
+    policies of your own to read; one without binds nothing there."""
+    scoped = TenancyModel(namespace="t", scopes_setting="t.scopes")
+    ctx = SecurityContext("tenant-a", "ws-1", scopes=frozenset({"notes:write", "notes:read"}))
+    async with scoped_session(db.app, scoped, ctx) as conn:
+        value = await conn.execute(text("SELECT current_setting('t.scopes', true)"))
+        assert value.scalar() == "notes:read,notes:write"
+    async with scoped_session(db.app, NOTES, ctx) as conn:
+        value = await conn.execute(text("SELECT current_setting('t.scopes', true)"))
+        assert value.scalar() in (None, "")
+    with pytest.raises(ValueError, match="comma"):
+        async with scoped_session(
+            db.app, scoped, SecurityContext("tenant-a", "ws-1", scopes=frozenset({"a,b"}))
+        ):
+            pytest.fail("bound a comma-bearing scope")
+
+
+async def test_a_commit_inside_a_session_ends_its_context(db: Db) -> None:
+    """Settings are local to the transaction, so committing inside a session unbinds them: what
+    follows reads nothing and writes nothing. The README says not to commit inside one."""
+    async with scoped_session(db.app, NOTES, A1) as conn:
+        assert await _bodies(conn) == ["a1"]
+        await conn.commit()
+        assert await _bodies(conn) == []

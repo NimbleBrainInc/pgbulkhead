@@ -29,7 +29,7 @@ pip install pgbulkhead        # or: uv add pgbulkhead
 ```
 
 Python 3.12+, SQLAlchemy 2 (asyncio), any async Postgres driver (tested with asyncpg), Postgres
-14+.
+14+ (15+ for a view over tenant data; see [the threat model](#threat-model)).
 
 ## How it works
 
@@ -58,7 +58,8 @@ At request time, build the context from what you verified and open a session:
 from pgbulkhead import SecuredDatabase, SecurityContext, context_from_claims
 
 db = SecuredDatabase(model=MODEL, url_env="NOTES_DATABASE_URL", prefix="NOTES")
-db.check()  # at startup: settings validated, so a bad value fails the deploy, not a call
+db.check()               # at startup: settings validated, so a bad value fails the deploy
+await db.check_role()    # and the role refused if row-level security would not apply to it
 
 @mcp.tool()
 async def list_notes() -> list[dict]:
@@ -95,8 +96,14 @@ What that means in practice:
 
 What the guarantee rests on, all of which is yours to provision:
 
-1. **The app role is not a superuser and not `BYPASSRLS`.** Either one silently voids every
-   policy. Create it with `NOSUPERUSER NOBYPASSRLS`.
+1. **The app role is not a superuser and not `BYPASSRLS`.** Postgres applies no policy to
+   either, so every tenant's rows would be visible. Create it with `NOSUPERUSER NOBYPASSRLS`.
+   This one is checked for you: an engine from `create_pooled_engine` (and so every
+   `SecuredDatabase`) refuses each connection made as such a role with `UnsafeRoleError` before
+   any session runs, and `await db.check_role()` at startup fails the deploy instead of the
+   first call. For an engine you build yourself, use `install_role_guard(engine)` or
+   `await check_role(conn)`. Pass `refuse_bypass_roles=False` only to an engine that is meant
+   to bypass, such as your migrations'.
 2. **The app role does not own the tables**, or the policies are `FORCE`d. The rendered DDL
    forces them, so the owner is bound too, but keep migrations and serving on separate roles
    anyway.
@@ -105,6 +112,26 @@ What the guarantee rests on, all of which is yours to provision:
    own policy. A table without one is unprotected.
 4. **The context comes from a verified source.** Everything above is moot if the tenant is read
    from a tool argument.
+5. **The key columns are text.** The policies compare each column with a setting, and settings
+   are text, so a `uuid` tenant or workspace column fails when the migration applies the policy
+   (`operator does not exist: uuid = text`). It fails loudly, not open; store the keys as `text`.
+6. **Nothing that reads tenant tables runs with its owner's privileges.** A view runs with its
+   owner's rights by default, and a `SECURITY DEFINER` function with its definer's, so either
+   one owned by a superuser or `BYPASSRLS` role (a common default when migrations run as
+   `postgres`) returns every tenant's rows. Create views `WITH (security_invoker = true)`
+   (Postgres 15+), or have them owned by a role that cannot bypass, and avoid `SECURITY DEFINER`
+   over tenant tables.
+
+What the guarantee does not cover, besides arbitrary SQL:
+
+- **Constraint side channels.** A unique or foreign-key constraint is checked against every row,
+  visible or not, so a write that collides with another tenant's row fails with a constraint
+  error, revealing that the row exists. Scope unique constraints to include the tenant column
+  (`UNIQUE (tenant_id, …)`), as you would anyway.
+- **Committing inside a session.** The settings end with the transaction, so a `commit()` inside
+  `db.session(...)` unbinds the context: what follows in the same block reads no row and writes
+  none. It fails closed, but it is never what you meant. Let the session commit on exit, and
+  open a second session for a write that must commit on its own.
 
 Settings are bound with `set_config(name, value, true)` inside a transaction, as bound
 parameters, so they end with the transaction and a pooled connection never carries one request's
@@ -226,8 +253,12 @@ because its protocol state is unknown. Nothing stays checked out either way.
 | `scoped_session` | a transaction with a context bound, refusing an empty identity |
 | `system_session` | a transaction through a `GucBypass`, optionally bound to one tenant |
 | `transaction`, `bind_context`, `check_context` | the shielded transaction alone, the binding alone, and the check `scoped_session` runs before it |
+| `CLEANUP_TIMEOUT_SECONDS` | how long each shielded cleanup step may run on the way out |
 | `SecuredDatabase` | one server's model, engine, pool settings and limiter |
-| `PoolSettings`, `create_pooled_engine` | pool and admission settings, validated together |
+| `AdmittedSlot` | one workspace slot held across several sessions (`db.admitted(ctx)`) |
+| `PoolSettings`, `PoolConfigError`, `create_pooled_engine` | pool and admission settings, validated together, and the engine they size |
+| `CONNECTIONS_PER_CALL` | the most connections one admitted call holds (2) |
+| `UnsafeRoleError`, `check_role`, `install_role_guard` | refusing a role that row-level security does not apply to |
 | `WorkspaceLimiter`, `admitted_session` | per-workspace admission, for a server not using `SecuredDatabase` |
 | `Overloaded`, `WorkspaceBusy`, `PoolExhausted`, `RefusalText` | refusals, and replacement text |
 | `pgbulkhead.testing.use_limiter` | run a database's sessions under a small limiter in tests |
@@ -235,25 +266,31 @@ because its protocol state is unknown. Nothing stays checked out either way.
 ## Development
 
 ```sh
-docker run -d --rm -p 127.0.0.1:5432:5432 -e POSTGRES_HOST_AUTH_METHOD=trust postgres:16-alpine
+docker run -d --rm -p 127.0.0.1:5432:5432 -e POSTGRES_HOST_AUTH_METHOD=trust postgres:17-alpine
 make verify     # ruff format check, ruff lint, ty, pytest
 ```
 
 The database suites need a disposable Postgres with a superuser at `PGBULKHEAD_TEST_URL`
 (default `postgresql+asyncpg://postgres@127.0.0.1:5432/postgres`); they create and drop their
-own roles and tables. Without one they skip locally and fail under CI.
+own roles and tables. Without one they skip locally and fail under CI. CI runs Python 3.12–3.14
+against Postgres 14, 17 and 18, plus once at the lowest dependency versions `pyproject.toml`
+allows.
 
 ## Releasing
 
 1. In a pull request, set `version` in `pyproject.toml` and date its `CHANGELOG.md` entry.
-2. After it merges, tag the merge commit `v<version>` and push the tag.
+2. After it merges, tag the merge commit `v<version>` and push the tag. Only admins can push a
+   version tag, and the release refuses a tag whose commit is not on `main`.
 3. `release.yml` builds once, installs the built wheel into a clean environment on each
    supported Python, runs the test suite the sdist ships against a real Postgres, and only then
    publishes those same files to PyPI. A version can never be uploaded twice, so a red run
-   publishes nothing; fix it and release the next patch version.
+   publishes nothing; fix it and release the next patch version. The publish step waits for a
+   maintainer's approval in the `pypi` environment.
 
 Publishing uses trusted publishing (OIDC); there is no API token to rotate or leak.
 
 ## License
 
-Apache-2.0. See [LICENSE](LICENSE) and [NOTICE](NOTICE). Security reports: [SECURITY.md](SECURITY.md).
+Apache-2.0. See [LICENSE](https://github.com/NimbleBrainInc/pgbulkhead/blob/main/LICENSE) and
+[NOTICE](https://github.com/NimbleBrainInc/pgbulkhead/blob/main/NOTICE). Security reports:
+[SECURITY.md](https://github.com/NimbleBrainInc/pgbulkhead/blob/main/SECURITY.md).

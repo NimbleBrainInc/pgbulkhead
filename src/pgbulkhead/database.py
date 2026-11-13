@@ -29,6 +29,7 @@ from .admission import (
 from .context import SecurityContext
 from .model import TenancyModel
 from .pool import PoolSettings, create_pooled_engine
+from .role import check_role
 from .session import scoped_session, system_session
 
 __all__ = ["SecuredDatabase"]
@@ -97,6 +98,16 @@ class SecuredDatabase:
         value fails the rollout rather than a user's call. Opens no connection.
         """
         _ = self.limiter
+
+    async def check_role(self) -> None:
+        """Open one connection and raise :class:`~pgbulkhead.UnsafeRoleError` if its role is a
+        superuser or ``BYPASSRLS``; call it at startup, beside :meth:`check`.
+
+        The engine refuses such a role on every connection anyway, so a session can never run
+        as one; this makes the rollout fail rather than the first user's call.
+        """
+        async with self.get_engine().connect() as conn:
+            await check_role(conn)
 
     def get_engine(self) -> AsyncEngine:
         """The pooled engine, built on first use."""

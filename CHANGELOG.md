@@ -4,6 +4,32 @@ All notable changes to this project are recorded here. The format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and versions follow
 [Semantic Versioning](https://semver.org/). Until 1.0, a minor version may change the API.
 
+## [0.1.2] - 2026-11-12
+
+### Changed
+
+- **A pooled engine refuses a role that row-level security does not apply to.**
+  `create_pooled_engine`, and so every `SecuredDatabase`, now refuses each connection made as a
+  superuser or `BYPASSRLS` role with `UnsafeRoleError`, before any session runs on it. Postgres
+  applies no policy to such a role, so a server misconfigured to use one used to see every
+  tenant's rows without any error. An engine meant to bypass (your migrations') passes
+  `refuse_bypass_roles=False`.
+- The minimum SQLAlchemy is 2.0.44. Earlier 2.0 releases fail this package's cancellation
+  suite: 2.0.42 and 2.0.43 lose a connection when a query is cancelled mid-flight.
+
+### Added
+
+- `UnsafeRoleError`, `check_role(conn)`, `install_role_guard(engine)`, and
+  `SecuredDatabase.check_role()` for a fail-fast check at startup.
+- `context_from_claims` reads scopes given as OAuth's space-separated string as well as a list.
+- Support for Python 3.14 and Postgres 18, tested in CI.
+
+### Documentation
+
+- The threat model now covers text-only key columns, views and `SECURITY DEFINER` functions
+  that run with a bypassing owner's rights, constraint side channels, and committing inside a
+  session.
+
 ## [0.1.1] - 2026-11-11
 
 ### Fixed
@@ -34,5 +60,6 @@ First release.
 - `SecuredDatabase`, `PoolSettings`, `WorkspaceLimiter`: per-workspace admission sized together
   with the pool, with `Overloaded` refusals whose text a server can replace.
 
+[0.1.2]: https://github.com/NimbleBrainInc/pgbulkhead/releases/tag/v0.1.2
 [0.1.1]: https://github.com/NimbleBrainInc/pgbulkhead/releases/tag/v0.1.1
 [0.1.0]: https://github.com/NimbleBrainInc/pgbulkhead/releases/tag/v0.1.0

@@ -69,3 +69,15 @@ def test_check_context_refuses_values_a_list_binding_would_split() -> None:
             check_context(with_scopes, SecurityContext("t", "w", scopes=frozenset(scopes)))
     # Scopes are only checked when the model binds them.
     check_context(TenancyModel(), SecurityContext("t", "w", scopes=frozenset({"a,b"})))
+
+
+def test_scopes_read_from_an_oauth_space_separated_string() -> None:
+    claims = {"tenant_id": "t", "workspace_id": "w", "scopes": "notes:read  notes:write"}
+    assert context_from_claims(claims).scopes == frozenset({"notes:read", "notes:write"})
+
+
+def test_allowed_workspaces_given_as_a_string_grant_nothing() -> None:
+    """Only scopes take the OAuth string form; a string where a list of grants belongs is not
+    split into grants."""
+    claims = {"tenant_id": "t", "workspace_id": "w", "allowed_workspaces": "w2 w3"}
+    assert context_from_claims(claims).allowed_workspaces == frozenset({"w"})
