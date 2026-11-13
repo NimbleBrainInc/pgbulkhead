@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import pytest
+from sqlalchemy.pool import QueuePool
 
 from pgbulkhead import (
     CONNECTIONS_PER_CALL,
@@ -97,9 +98,10 @@ async def test_engine_pool_is_sized_by_the_settings() -> None:
     engine = create_pooled_engine("postgresql+asyncpg://u@127.0.0.1:1/db", settings)
     try:
         pool = engine.pool
-        assert pool.size() == 3  # ty: ignore[missing-attribute]
-        assert pool._max_overflow == 4  # ty: ignore[missing-attribute]
-        assert pool._timeout == 1.5  # ty: ignore[missing-attribute]
+        assert isinstance(pool, QueuePool)
+        assert pool.size() == 3
+        assert pool._max_overflow == 4
+        assert pool._timeout == 1.5
         assert pool._pre_ping is True
     finally:
         await engine.dispose()
