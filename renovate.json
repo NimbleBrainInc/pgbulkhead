@@ -1,0 +1,63 @@
+{
+  "$schema": "https://docs.renovatebot.com/renovate-schema.json",
+  "extends": [
+    "config:recommended",
+    "helpers:pinGitHubActionDigests"
+  ],
+  "timezone": "Pacific/Honolulu",
+  "schedule": [
+    "before 6am on monday"
+  ],
+  "dependencyDashboard": true,
+  "labels": [
+    "dependencies"
+  ],
+  "minimumReleaseAge": "14 days",
+  "description": "Two managers: the Python project (pyproject.toml and uv.lock) and the SHA-pinned GitHub Actions. Each update waits 14 days after its release.",
+  "enabledManagers": [
+    "pep621",
+    "github-actions"
+  ],
+  "lockFileMaintenance": {
+    "description": "Off: uv here has no exclude-newer, so a refresh would take releases published hours earlier. Per-package updates carry the 14-day wait and move uv.lock themselves.",
+    "enabled": false
+  },
+  "major": {
+    "dependencyDashboardApproval": true
+  },
+  "vulnerabilityAlerts": {
+    "addLabels": [
+      "security"
+    ],
+    "schedule": [
+      "at any time"
+    ],
+    "minimumReleaseAge": null,
+    "dependencyDashboardApproval": false
+  },
+  "packageRules": [
+    {
+      "description": "A library declares the lowest versions it supports, and CI tests those floors (the lowest job). Raising a floor is a deliberate change, so Renovate moves uv.lock only and leaves pyproject.toml's ranges alone.",
+      "matchManagers": [
+        "pep621"
+      ],
+      "rangeStrategy": "update-lockfile"
+    },
+    {
+      "matchManagers": [
+        "pep621"
+      ],
+      "matchUpdateTypes": [
+        "minor",
+        "patch"
+      ],
+      "groupName": "python dependencies"
+    },
+    {
+      "matchManagers": [
+        "github-actions"
+      ],
+      "groupName": "github actions"
+    }
+  ]
+}
