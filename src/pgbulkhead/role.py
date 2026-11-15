@@ -124,6 +124,12 @@ def _refuse(role: str, reasons: list[str]) -> None:
     )
 
 
+def _autocommit(dbapi_connection: Any) -> bool:
+    """Whether the driver connection runs each statement in its own transaction, so the probe
+    must open and roll back one itself."""
+    return bool(getattr(dbapi_connection, "autocommit", False))
+
+
 def _warn_no_probe(role: str) -> None:
     log.warning(
         "pgbulkhead could not run its row-level security probe for role %r (the probe needs "
@@ -133,13 +139,21 @@ def _warn_no_probe(role: str) -> None:
     )
 
 
+async def _probe(conn: AsyncConnection, reasons: list[str]) -> None:
+    for statement in _PROBE_STATEMENTS:
+        await conn.execute(text(statement))
+    if (await conn.execute(text(_PROBE_COUNT))).scalar_one() != 0:
+        reasons.append(_PROBE_REASON)
+
+
 async def check_role(
     conn: AsyncConnection, *, admin_roles: Iterable[str] = MANAGED_ADMIN_ROLES
 ) -> None:
     """Raise :class:`UnsafeRoleError` if ``conn``'s session bypasses row-level security.
 
     The probe runs in a savepoint that is rolled back, so a transaction ``conn`` holds is left
-    as it was. ``admin_roles`` replaces :data:`MANAGED_ADMIN_ROLES`.
+    as it was; on an ``AUTOCOMMIT`` connection it runs in a transaction of its own, rolled back.
+    ``admin_roles`` replaces :data:`MANAGED_ADMIN_ROLES`.
     """
     row = (await conn.execute(text(_role_query(_admin_roles(admin_roles))))).one()
     role, superuser, bypassrls, member_of, can_probe = row
@@ -147,13 +161,16 @@ async def check_role(
     if not reasons:
         if not can_probe:
             _warn_no_probe(role)
+        elif _autocommit((await conn.get_raw_connection()).dbapi_connection):
+            await conn.execute(text("BEGIN"))
+            try:
+                await _probe(conn, reasons)
+            finally:
+                await conn.execute(text("ROLLBACK"))
         else:
             savepoint = await conn.begin_nested()
             try:
-                for statement in _PROBE_STATEMENTS:
-                    await conn.execute(text(statement))
-                if (await conn.execute(text(_PROBE_COUNT))).scalar_one() != 0:
-                    reasons.append(_PROBE_REASON)
+                await _probe(conn, reasons)
             finally:
                 await savepoint.rollback()
     _refuse(role, reasons)
@@ -165,9 +182,10 @@ def install_role_guard(
     """Refuse every new connection ``engine`` makes whose session bypasses row-level security.
 
     The checks run when the pool opens a physical connection, in one transaction that is rolled
-    back before the connection is handed out. A refused connection is closed here, before the
-    error propagates, so the checkout that asked for it fails with :class:`UnsafeRoleError`, no
-    session ever runs on it, and repeated attempts leave no connection open on the server.
+    back before the connection is handed out, on an ``AUTOCOMMIT`` engine too. A refused
+    connection is closed here, before the error propagates, so the checkout that asked for it
+    fails with :class:`UnsafeRoleError`, no session ever runs on it, and repeated attempts leave
+    no connection open on the server.
     (Some SQLAlchemy 2.0 releases do not close a connection whose ``connect`` listener raised.)
     ``admin_roles`` replaces :data:`MANAGED_ADMIN_ROLES`. Returns ``engine``.
     """
@@ -182,11 +200,18 @@ def install_role_guard(
                 role, superuser, bypassrls, member_of, can_probe = cursor.fetchone()
                 reasons = _reasons(superuser, bypassrls, list(member_of))
                 if not reasons and can_probe:
-                    for statement in _PROBE_STATEMENTS:
-                        cursor.execute(statement)
-                    cursor.execute(_PROBE_COUNT)
-                    if cursor.fetchone()[0] != 0:
-                        reasons.append(_PROBE_REASON)
+                    autocommit = _autocommit(dbapi_connection)
+                    if autocommit:
+                        cursor.execute("BEGIN")
+                    try:
+                        for statement in _PROBE_STATEMENTS:
+                            cursor.execute(statement)
+                        cursor.execute(_PROBE_COUNT)
+                        if cursor.fetchone()[0] != 0:
+                            reasons.append(_PROBE_REASON)
+                    finally:
+                        if autocommit:
+                            cursor.execute("ROLLBACK")
             finally:
                 cursor.close()
             dbapi_connection.rollback()

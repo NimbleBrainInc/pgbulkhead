@@ -304,6 +304,33 @@ async def test_check_role_keeps_the_callers_transaction(
         assert probe.scalar() is None
 
 
+async def test_under_autocommit_the_guard_leaves_no_probe_table(
+    pg_url: str, engines: list[AsyncEngine]
+) -> None:
+    """Each statement commits on its own, so the probe opens and rolls back its own transaction."""
+    engine = install_role_guard(create_async_engine(pg_url, isolation_level="AUTOCOMMIT"))
+    engines.append(engine)
+    async with engine.connect() as conn:
+        probe = await conn.execute(text("SELECT to_regclass('pg_temp.pgbulkhead_rls_probe')"))
+        assert probe.scalar() is None
+
+
+async def test_under_autocommit_check_role_probes_and_leaves_no_probe_table(
+    pg_url: str, bypass_url: str, engines: list[AsyncEngine], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    safe = create_async_engine(pg_url, isolation_level="AUTOCOMMIT")
+    unsafe = create_async_engine(bypass_url, isolation_level="AUTOCOMMIT")
+    engines.extend([safe, unsafe])
+    async with safe.connect() as conn:
+        await check_role(conn)
+        probe = await conn.execute(text("SELECT to_regclass('pg_temp.pgbulkhead_rls_probe')"))
+        assert probe.scalar() is None
+    monkeypatch.setattr(role_module, "_reasons", lambda *_: [])
+    async with unsafe.connect() as conn:
+        with pytest.raises(UnsafeRoleError, match="saw a row that a forced policy hides"):
+            await check_role(conn)
+
+
 @pytest_asyncio.fixture
 async def no_temp_url(admin_engine: AsyncEngine, pg_url: str) -> str:
     """The server role, on a database where nobody may create temporary tables."""
