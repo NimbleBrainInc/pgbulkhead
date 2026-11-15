@@ -32,7 +32,7 @@ from .database import SecuredDatabase
 from .model import GucBypass, RoleBypass, TenancyModel
 from .policy import policy_sql, policy_statements
 from .pool import CONNECTIONS_PER_CALL, PoolConfigError, PoolSettings, create_pooled_engine
-from .role import UnsafeRoleError, check_role, install_role_guard
+from .role import MANAGED_ADMIN_ROLES, UnsafeRoleError, check_role, install_role_guard
 from .session import (
     CLEANUP_TIMEOUT_SECONDS,
     bind_context,
@@ -45,6 +45,7 @@ from .session import (
 __all__ = [
     "CLEANUP_TIMEOUT_SECONDS",
     "CONNECTIONS_PER_CALL",
+    "MANAGED_ADMIN_ROLES",
     "AdmittedSlot",
     "ClaimNames",
     "GucBypass",

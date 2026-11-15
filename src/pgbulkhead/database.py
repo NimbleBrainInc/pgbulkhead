@@ -100,8 +100,8 @@ class SecuredDatabase:
         _ = self.limiter
 
     async def check_role(self) -> None:
-        """Open one connection and raise :class:`~pgbulkhead.UnsafeRoleError` if its role is a
-        superuser or ``BYPASSRLS``; call it at startup, beside :meth:`check`.
+        """Open one connection and raise :class:`~pgbulkhead.UnsafeRoleError` if its session
+        bypasses row-level security; call it at startup, beside :meth:`check`.
 
         The engine refuses such a role on every connection anyway, so a session can never run
         as one; this makes the rollout fail rather than the first user's call.
