@@ -331,6 +331,26 @@ async def test_under_autocommit_check_role_probes_and_leaves_no_probe_table(
             await check_role(conn)
 
 
+async def test_under_autocommit_check_role_keeps_a_transaction_the_caller_began(
+    pg_url: str, engines: list[AsyncEngine]
+) -> None:
+    """A transaction opened with SQL BEGIN on an AUTOCOMMIT connection survives the probe."""
+    engine = create_async_engine(pg_url, isolation_level="AUTOCOMMIT")
+    engines.append(engine)
+    async with engine.connect() as conn:
+        await conn.execute(text("BEGIN"))
+        await conn.execute(text("CREATE TEMPORARY TABLE kept (x int)"))
+        await conn.execute(text("INSERT INTO kept VALUES (7)"))
+        await check_role(conn)
+        raw = await conn.get_raw_connection()
+        assert raw.driver_connection is not None
+        assert raw.driver_connection.is_in_transaction()
+        assert (await conn.execute(text("SELECT x FROM kept"))).scalar() == 7
+        probe = await conn.execute(text("SELECT to_regclass('pg_temp.pgbulkhead_rls_probe')"))
+        assert probe.scalar() is None
+        await conn.execute(text("ROLLBACK"))
+
+
 @pytest_asyncio.fixture
 async def no_temp_url(admin_engine: AsyncEngine, pg_url: str) -> str:
     """The server role, on a database where nobody may create temporary tables."""

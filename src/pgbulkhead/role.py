@@ -38,6 +38,7 @@ from collections.abc import Iterable
 from typing import Any
 
 from sqlalchemy import event, text
+from sqlalchemy.exc import DBAPIError
 from sqlalchemy.ext.asyncio import AsyncConnection, AsyncEngine
 
 __all__ = ["MANAGED_ADMIN_ROLES", "UnsafeRoleError", "check_role", "install_role_guard"]
@@ -146,13 +147,29 @@ async def _probe(conn: AsyncConnection, reasons: list[str]) -> None:
         reasons.append(_PROBE_REASON)
 
 
+_SAVEPOINT = "pgbulkhead_rls_probe"
+_NO_ACTIVE_SQL_TRANSACTION = "25P01"
+
+
+async def _savepoint(conn: AsyncConnection) -> bool:
+    """Set the probe's savepoint, or return ``False`` when no transaction block is open."""
+    try:
+        await conn.execute(text(f"SAVEPOINT {_SAVEPOINT}"))
+    except DBAPIError as error:
+        if getattr(error.orig, "sqlstate", None) == _NO_ACTIVE_SQL_TRANSACTION:
+            return False
+        raise
+    return True
+
+
 async def check_role(
     conn: AsyncConnection, *, admin_roles: Iterable[str] = MANAGED_ADMIN_ROLES
 ) -> None:
     """Raise :class:`UnsafeRoleError` if ``conn``'s session bypasses row-level security.
 
     The probe runs in a savepoint that is rolled back, so a transaction ``conn`` holds is left
-    as it was; on an ``AUTOCOMMIT`` connection it runs in a transaction of its own, rolled back.
+    as it was; on an ``AUTOCOMMIT`` connection with no transaction open it runs in a transaction
+    of its own, rolled back.
     ``admin_roles`` replaces :data:`MANAGED_ADMIN_ROLES`.
     """
     row = (await conn.execute(text(_role_query(_admin_roles(admin_roles))))).one()
@@ -162,11 +179,19 @@ async def check_role(
         if not can_probe:
             _warn_no_probe(role)
         elif _autocommit((await conn.get_raw_connection()).dbapi_connection):
-            await conn.execute(text("BEGIN"))
+            # Autocommit does not say whether the caller opened a transaction with SQL BEGIN;
+            # the server does, by refusing a savepoint outside one.
+            owned = not await _savepoint(conn)
+            if owned:
+                await conn.execute(text("BEGIN"))
             try:
                 await _probe(conn, reasons)
             finally:
-                await conn.execute(text("ROLLBACK"))
+                if owned:
+                    await conn.execute(text("ROLLBACK"))
+                else:
+                    await conn.execute(text(f"ROLLBACK TO SAVEPOINT {_SAVEPOINT}"))
+                    await conn.execute(text(f"RELEASE SAVEPOINT {_SAVEPOINT}"))
         else:
             savepoint = await conn.begin_nested()
             try:
