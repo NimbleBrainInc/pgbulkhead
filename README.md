@@ -96,14 +96,24 @@ What that means in practice:
 
 What the guarantee rests on, all of which is yours to provision:
 
-1. **The app role is not a superuser and not `BYPASSRLS`.** Postgres applies no policy to
-   either, so every tenant's rows would be visible. Create it with `NOSUPERUSER NOBYPASSRLS`.
-   This one is checked for you: an engine from `create_pooled_engine` (and so every
-   `SecuredDatabase`) refuses each connection made as such a role with `UnsafeRoleError` before
-   any session runs, and `await db.check_role()` at startup fails the deploy instead of the
-   first call. For an engine you build yourself, use `install_role_guard(engine)` or
-   `await check_role(conn)`. Pass `refuse_bypass_roles=False` only to an engine that is meant
-   to bypass, such as your migrations'.
+1. **Row-level security applies to the app role.** Postgres applies no policy to a superuser
+   or a `BYPASSRLS` role, and a managed Postgres can exempt its admin roles too (on Amazon RDS,
+   a member of `rds_superuser` bypasses every policy with neither attribute), so every tenant's
+   rows would be visible. Create the app role with `NOSUPERUSER NOBYPASSRLS` and grant it no
+   admin role. This one is checked for you: an engine from `create_pooled_engine` (and so every
+   `SecuredDatabase`) refuses each new connection whose session bypasses with `UnsafeRoleError`
+   before any session runs, and `await db.check_role()` at startup fails the deploy instead of
+   the first call. Each connection is checked by its role's attributes, by membership in a
+   managed Postgres admin role (`MANAGED_ADMIN_ROLES`), and by behaviour: in a transaction it
+   rolls back, the session creates a temporary table with one row and a forced policy that hides
+   it, and a session that still sees the row is refused, whatever the reason it bypasses. The
+   probe adds a few milliseconds to each new physical connection (six statements), not to each
+   session. It needs the `TEMP` privilege (granted to `PUBLIC` by default) and a writable
+   session; without them the other two checks still run and the `pgbulkhead.role` logger warns.
+   For an engine you build yourself, use `install_role_guard(engine)` or
+   `await check_role(conn)`; both take `admin_roles=` to replace the list. Pass
+   `refuse_bypass_roles=False` only to an engine that is meant to bypass, such as your
+   migrations'.
 2. **The app role does not own the tables**, or the policies are `FORCE`d. The rendered DDL
    forces them, so the owner is bound too, but keep migrations and serving on separate roles
    anyway.
@@ -258,7 +268,7 @@ because its protocol state is unknown. Nothing stays checked out either way.
 | `AdmittedSlot` | one workspace slot held across several sessions (`db.admitted(ctx)`) |
 | `PoolSettings`, `PoolConfigError`, `create_pooled_engine` | pool and admission settings, validated together, and the engine they size |
 | `CONNECTIONS_PER_CALL` | the most connections one admitted call holds (2) |
-| `UnsafeRoleError`, `check_role`, `install_role_guard` | refusing a role that row-level security does not apply to |
+| `UnsafeRoleError`, `check_role`, `install_role_guard`, `MANAGED_ADMIN_ROLES` | refusing a session that row-level security does not apply to |
 | `WorkspaceLimiter`, `admitted_session` | per-workspace admission, for a server not using `SecuredDatabase` |
 | `Overloaded`, `WorkspaceBusy`, `PoolExhausted`, `RefusalText` | refusals, and replacement text |
 | `pgbulkhead.testing.use_limiter` | run a database's sessions under a small limiter in tests |

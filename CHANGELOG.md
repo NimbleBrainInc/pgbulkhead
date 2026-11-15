@@ -4,6 +4,29 @@ All notable changes to this project are recorded here. The format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and versions follow
 [Semantic Versioning](https://semver.org/). Until 1.0, a minor version may change the API.
 
+## [0.1.3] - 2026-11-14
+
+### Changed
+
+- **The role guard refuses every session that bypasses row-level security, not only roles whose
+  attributes say so.** A managed Postgres can exempt a role with neither `SUPERUSER` nor
+  `BYPASSRLS`: on Amazon RDS, a member of `rds_superuser` (the master user) bypasses every
+  policy, and 0.1.2 admitted it. Each new connection is now also checked by membership in a
+  managed Postgres admin role (`MANAGED_ADMIN_ROLES`: `rds_superuser`, `azure_pg_admin`,
+  `cloudsqlsuperuser`, `alloydbsuperuser`, `neon_superuser`) and by a behavioural probe: in a
+  transaction that is rolled back, the session creates a temporary table holding one row with a
+  forced policy that hides it, and is refused if it still sees the row. The probe adds six
+  statements to each new physical connection. Without the `TEMP` privilege or in a read-only
+  session it is skipped, the other checks still run, and the `pgbulkhead.role` logger warns.
+- `UnsafeRoleError`'s message names each check that failed.
+- The guard's catalog queries are schema-qualified, so a `search_path` cannot shadow
+  `pg_roles`.
+
+### Added
+
+- `MANAGED_ADMIN_ROLES`, and an `admin_roles=` keyword on `install_role_guard` and
+  `check_role` that replaces it.
+
 ## [0.1.2] - 2026-11-12
 
 ### Changed

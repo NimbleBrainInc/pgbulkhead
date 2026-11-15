@@ -191,8 +191,9 @@ def create_pooled_engine(
 ) -> AsyncEngine:
     """An async engine whose pool is sized by ``settings``, with ``pool_pre_ping`` on.
 
-    With ``refuse_bypass_roles`` (the default) the engine refuses every connection made as a
-    superuser or ``BYPASSRLS`` role, which row-level security does not apply to (see
+    With ``refuse_bypass_roles`` (the default) the engine refuses every connection whose
+    session bypasses row-level security: a superuser, a ``BYPASSRLS`` role, a member of a
+    managed Postgres admin role, or any session a probe sees bypass a forced policy (see
     :func:`~pgbulkhead.install_role_guard`). Turn it off only for an engine that is meant to
     bypass, such as one that runs migrations. ``options`` pass through to
     ``create_async_engine`` and may override the pool keywords.
